@@ -45,13 +45,6 @@ Each bot monitors the **latest posted recommendations** on every scan tick using
 
 - **DeFiLlama Pools API** (`https://yields.llama.fi/pools`)
 
----
-
-## Setup
-
-### 1) Requirements
-- Python 3.10+
-- `requests`
 
 ```bash
 pip install requests
