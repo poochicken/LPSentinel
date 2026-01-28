@@ -21,7 +21,7 @@ import requests
 AUTO_WEEKLY_POST = True
 
 # Set True to force a post on the next loop tick; it resets to False after posting.
-FORCE_POST_NOW = False
+FORCE_POST_NOW = True
 
 # Weekly cadence (days)
 WEEKLY_INTERVAL_DAYS = 7

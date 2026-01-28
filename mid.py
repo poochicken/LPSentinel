@@ -180,7 +180,7 @@ def tank_reasons(prev: Dict[str, Any], cur: Dict[str, Any]) -> List[str]:
     return r
 
 def format_picks(picks: List[Dict[str, Any]], title: str) -> str:
-    lines = [f"🟢 **{title} — {datetime.now().strftime('%Y-%m-%d')}**", ""]
+    lines = [f"🟡 **{title} — {datetime.now().strftime('%Y-%m-%d')}**", ""]
     for p in picks:
         s = pool_snapshot(p)
         lines.append(

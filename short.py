@@ -181,20 +181,17 @@ def should_post_daily(last_ts: Optional[int]) -> bool:
 
 
 # =========================================================
-# PRICE DIVERGENCE / IL RISK TRACKING (OPTIONAL MODULE)
+# PRICE DIVERGENCE / IL RISK TRACKING (CACHED + SAFE)
+# Use for MEDIUM / SHORT bots only
 # =========================================================
 
-# Turn OFF for stable-only bot
-ENABLE_PRICE_TRACKING = True
+ENABLE_PRICE_TRACKING = True   # set False for stable-weekly
 
-# Divergence thresholds (% difference in 24h price change)
-PRICE_DIVERGENCE_24H_WARN = 8.0     # soft warning
-PRICE_DIVERGENCE_24H_EXIT = 12.0    # hard exit / refresh trigger
+PRICE_DIVERGENCE_24H_WARN = 8.0
+PRICE_DIVERGENCE_24H_EXIT = 12.0
 
 COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
 
-# Explicit token → CoinGecko ID mapping
-# If a token is missing here, price tracking is skipped for that pool
 COINGECKO_IDS = {
     "ETH": "ethereum",
     "WETH": "ethereum",
@@ -210,15 +207,11 @@ COINGECKO_IDS = {
     "USDE": "ethena-usde",
 }
 
-# ---------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------
+# ---- price cache (prevents 429 spam) ----
+PRICE_CACHE = {}
+PRICE_CACHE_TTL = 15 * 60  # seconds
 
 def extract_tokens(symbol: str):
-    """
-    Extract token symbols from pool symbol like 'WETH-USDC' or 'ETH/USDC'.
-    Returns (tokenA, tokenB) or (None, None).
-    """
     if not symbol:
         return None, None
     s = symbol.replace("/", "-").upper()
@@ -227,16 +220,20 @@ def extract_tokens(symbol: str):
         return None, None
     return parts[0], parts[1]
 
-
 def fetch_24h_changes(token_a: str, token_b: str):
-    """
-    Fetch 24h % price change for two tokens from CoinGecko.
-    Returns (pctA, pctB) or (None, None) if unavailable.
-    """
     ida = COINGECKO_IDS.get(token_a)
     idb = COINGECKO_IDS.get(token_b)
     if not ida or not idb:
         return None, None
+
+    key = tuple(sorted((ida, idb)))
+    now = time.time()
+
+    # use cached value if fresh
+    if key in PRICE_CACHE:
+        ts, data = PRICE_CACHE[key]
+        if now - ts < PRICE_CACHE_TTL:
+            return data
 
     params = {
         "ids": f"{ida},{idb}",
@@ -244,33 +241,25 @@ def fetch_24h_changes(token_a: str, token_b: str):
         "include_24hr_change": "true",
     }
 
-    r = requests.get(COINGECKO_PRICE_URL, params=params, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-
     try:
-        return (
-            float(data[ida]["usd_24h_change"]),
-            float(data[idb]["usd_24h_change"]),
+        r = requests.get(COINGECKO_PRICE_URL, params=params, timeout=10)
+        if r.status_code == 429:
+            return None, None
+        r.raise_for_status()
+        j = r.json()
+
+        result = (
+            float(j[ida]["usd_24h_change"]),
+            float(j[idb]["usd_24h_change"]),
         )
+
+        PRICE_CACHE[key] = (now, result)
+        return result
+
     except Exception:
         return None, None
 
-
-def price_divergence(pct_a: float, pct_b: float) -> float:
-    """Absolute divergence between two % changes."""
-    return abs(pct_a - pct_b)
-
-
 def price_il_risk(symbol: str):
-    """
-    Main IL-risk signal.
-    Returns:
-      ("exit", divergence)  -> strong IL risk
-      ("warn", divergence)  -> watch closely
-      (None, divergence)    -> OK
-      (None, None)          -> skipped / unavailable
-    """
     if not ENABLE_PRICE_TRACKING:
         return None, None
 
@@ -282,7 +271,7 @@ def price_il_risk(symbol: str):
     if pa is None or pb is None:
         return None, None
 
-    div = price_divergence(pa, pb)
+    div = abs(pa - pb)
 
     if div >= PRICE_DIVERGENCE_24H_EXIT:
         return "exit", div
@@ -314,7 +303,7 @@ def main():
             if FORCE_POST_NOW or should_post_daily(last_post):
                 picks = pick_short_pools(pools)
                 post_to_discord(
-                    f"🟡 **SHORT-TERM LP PICKS — {datetime.now().strftime('%Y-%m-%d')}**\n"
+                    f"🟢 **SHORT-TERM LP PICKS — {datetime.now().strftime('%Y-%m-%d')}**\n"
                     "Mode: ACTIVE / CHECK DAILY\n\n" +
                     "\n".join(
                         f"• **{p['project']}** | {p['chain']} | `{p['symbol']}`\n"
@@ -328,6 +317,7 @@ def main():
                 FORCE_POST_NOW = False
 
             # ---- Continuous health checks ---_
+            # ---- Continuous health checks ----
             bad = []
             refreshed = []
 
@@ -339,17 +329,15 @@ def main():
                 cur = pool_snapshot(idx[pid])
                 refreshed.append(cur)
 
-                # Existing checks (TVL, volume, APY, IL)
+                # existing checks
                 reasons = tank_reasons(prev, cur)
 
-                # ===== NEW: PRICE DIVERGENCE / IL RISK CHECK =====
+                # ---- price divergence IL risk ----
                 signal, div = price_il_risk(prev["symbol"])
-
                 if signal == "exit":
                     reasons.append(f"Price divergence {div:.1f}% (IL risk)")
                 elif signal == "warn":
                     reasons.append(f"Price divergence {div:.1f}% (watch)")
-                # ================================================
 
                 if reasons:
                     bad.append((cur, reasons))
@@ -363,7 +351,6 @@ def main():
                     )
                 )
 
-                # Auto-refresh immediately on any failure
                 picks = pick_short_pools(pools)
                 post_to_discord(
                     "🟡 **AUTO-REFRESHED SHORT PICKS**\n\n" +
@@ -377,12 +364,6 @@ def main():
             else:
                 current = refreshed or current
 
-            state = {
-                "last_post_ts": last_post,
-                "current_recs": current,
-            }
-            with open(STATE_PATH, "w") as f:
-                json.dump(state, f, indent=2)
         except Exception as e:
             try:
                 post_to_discord(f"⚠️ Short bot error: `{type(e).__name__}: {str(e)[:160]}`")
