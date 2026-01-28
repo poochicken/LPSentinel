@@ -20,7 +20,7 @@ SCAN_INTERVAL_MIN = 20
 
 # =========================================================
 
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1465227282997317695/BTTH9Btv6_HUElVjSqFwRxaTI9lYLlLQHULdekuqWkLwfmKxK65Uqlc3AEFTVyuhK6iy"
+DISCORD_WEBHOOK_URL = "xxxxxxxxxx"
 POOLS_URL = "https://yields.llama.fi/pools"
 
 STATE_PATH = os.path.join(os.path.dirname(__file__), "state.json")
