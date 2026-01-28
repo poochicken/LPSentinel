@@ -19,7 +19,7 @@ AUTO_DAILY_POST = True
 FORCE_POST_NOW = False
 
 DAILY_INTERVAL_HOURS = 24
-SCAN_INTERVAL_MIN = 5
+SCAN_INTERVAL_MIN = 1
 
 # =========================================================
 
@@ -327,7 +327,7 @@ def main():
                 last_post = now_ts()
                 FORCE_POST_NOW = False
 
-            # ---- Continuous health checks ----
+            # ---- Continuous health checks ---_
             bad = []
             refreshed = []
 
