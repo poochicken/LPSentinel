@@ -34,7 +34,7 @@ SCAN_INTERVAL_MIN = 20
 # IMPORTANT: Put webhook in an env var to avoid leaking it.
 # In Terminal:
 #   export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/...."
-DISCORD_WEBHOOK_URL = "xxxxxxxx"
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1465233466630344868/4KtMSExOnfM7jLBCNI5D3zDqNO3WsXn8UjD1YwP5NnVXdWnsoQuWhXiO0nk2xB2UGdQL"
 
 # Universe source
 POOLS_URL = "https://yields.llama.fi/pools"

@@ -23,7 +23,7 @@ SCAN_INTERVAL_MIN = 5
 
 # =========================================================
 
-DISCORD_WEBHOOK_URL = "xxxxxxxxx"
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1465227340614205522/kECY9oJ7DlxKwkoZw8jGz9QQGgQdYiOgnHPS3VsJKh90odXi7-cQ3peHnAyoS_1ZmB1z"
 POOLS_URL = "https://yields.llama.fi/pools"
 STATE_PATH = os.path.join(os.path.dirname(__file__), "state_short_daily.json")
 
@@ -179,6 +179,119 @@ def should_post_daily(last_ts: Optional[int]) -> bool:
         return True
     return (now_ts() - last_ts) >= DAILY_INTERVAL_HOURS * 3600
 
+
+# =========================================================
+# PRICE DIVERGENCE / IL RISK TRACKING (OPTIONAL MODULE)
+# =========================================================
+
+# Turn OFF for stable-only bot
+ENABLE_PRICE_TRACKING = True
+
+# Divergence thresholds (% difference in 24h price change)
+PRICE_DIVERGENCE_24H_WARN = 8.0     # soft warning
+PRICE_DIVERGENCE_24H_EXIT = 12.0    # hard exit / refresh trigger
+
+COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
+
+# Explicit token → CoinGecko ID mapping
+# If a token is missing here, price tracking is skipped for that pool
+COINGECKO_IDS = {
+    "ETH": "ethereum",
+    "WETH": "ethereum",
+    "BTC": "bitcoin",
+    "WBTC": "bitcoin",
+    "SOL": "solana",
+    "BNB": "binancecoin",
+    "USDC": "usd-coin",
+    "USDT": "tether",
+    "DAI": "dai",
+    "FRAX": "frax",
+    "CRVUSD": "crvusd",
+    "USDE": "ethena-usde",
+}
+
+# ---------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------
+
+def extract_tokens(symbol: str):
+    """
+    Extract token symbols from pool symbol like 'WETH-USDC' or 'ETH/USDC'.
+    Returns (tokenA, tokenB) or (None, None).
+    """
+    if not symbol:
+        return None, None
+    s = symbol.replace("/", "-").upper()
+    parts = s.split("-")
+    if len(parts) != 2:
+        return None, None
+    return parts[0], parts[1]
+
+
+def fetch_24h_changes(token_a: str, token_b: str):
+    """
+    Fetch 24h % price change for two tokens from CoinGecko.
+    Returns (pctA, pctB) or (None, None) if unavailable.
+    """
+    ida = COINGECKO_IDS.get(token_a)
+    idb = COINGECKO_IDS.get(token_b)
+    if not ida or not idb:
+        return None, None
+
+    params = {
+        "ids": f"{ida},{idb}",
+        "vs_currencies": "usd",
+        "include_24hr_change": "true",
+    }
+
+    r = requests.get(COINGECKO_PRICE_URL, params=params, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+
+    try:
+        return (
+            float(data[ida]["usd_24h_change"]),
+            float(data[idb]["usd_24h_change"]),
+        )
+    except Exception:
+        return None, None
+
+
+def price_divergence(pct_a: float, pct_b: float) -> float:
+    """Absolute divergence between two % changes."""
+    return abs(pct_a - pct_b)
+
+
+def price_il_risk(symbol: str):
+    """
+    Main IL-risk signal.
+    Returns:
+      ("exit", divergence)  -> strong IL risk
+      ("warn", divergence)  -> watch closely
+      (None, divergence)    -> OK
+      (None, None)          -> skipped / unavailable
+    """
+    if not ENABLE_PRICE_TRACKING:
+        return None, None
+
+    a, b = extract_tokens(symbol)
+    if not a or not b:
+        return None, None
+
+    pa, pb = fetch_24h_changes(a, b)
+    if pa is None or pb is None:
+        return None, None
+
+    div = price_divergence(pa, pb)
+
+    if div >= PRICE_DIVERGENCE_24H_EXIT:
+        return "exit", div
+    if div >= PRICE_DIVERGENCE_24H_WARN:
+        return "warn", div
+
+    return None, div
+
+
 # ===================== MAIN =====================
 
 def main():
@@ -222,9 +335,22 @@ def main():
                 pid = prev["pool"]
                 if pid not in idx:
                     continue
+
                 cur = pool_snapshot(idx[pid])
                 refreshed.append(cur)
+
+                # Existing checks (TVL, volume, APY, IL)
                 reasons = tank_reasons(prev, cur)
+
+                # ===== NEW: PRICE DIVERGENCE / IL RISK CHECK =====
+                signal, div = price_il_risk(prev["symbol"])
+
+                if signal == "exit":
+                    reasons.append(f"Price divergence {div:.1f}% (IL risk)")
+                elif signal == "warn":
+                    reasons.append(f"Price divergence {div:.1f}% (watch)")
+                # ================================================
+
                 if reasons:
                     bad.append((cur, reasons))
 
@@ -236,6 +362,8 @@ def main():
                         for s, r in bad
                     )
                 )
+
+                # Auto-refresh immediately on any failure
                 picks = pick_short_pools(pools)
                 post_to_discord(
                     "🟡 **AUTO-REFRESHED SHORT PICKS**\n\n" +
@@ -245,6 +373,7 @@ def main():
                     )
                 )
                 current = [pool_snapshot(p) for p in picks]
+
             else:
                 current = refreshed or current
 
@@ -254,7 +383,6 @@ def main():
             }
             with open(STATE_PATH, "w") as f:
                 json.dump(state, f, indent=2)
-
         except Exception as e:
             try:
                 post_to_discord(f"⚠️ Short bot error: `{type(e).__name__}: {str(e)[:160]}`")
