@@ -25,6 +25,7 @@ LP Sentinel is a lightweight, always-on monitor for DeFi liquidity pools. It pul
 - Higher activity pools with faster rotation
 - Daily posting cadence (interval-based)
 - Constant health checks + auto-refresh on failure
+- 24h price tracker to try to minimize IL
 
 ---
 
