@@ -303,7 +303,7 @@ def main():
             if FORCE_POST_NOW or should_post_daily(last_post):
                 picks = pick_short_pools(pools)
                 post_to_discord(
-                    f"🟢 **SHORT-TERM LP PICKS — {datetime.now().strftime('%Y-%m-%d')}**\n"
+                    f"🔴 **SHORT-TERM LP PICKS — {datetime.now().strftime('%Y-%m-%d')}**\n"
                     "Mode: ACTIVE / CHECK DAILY\n\n" +
                     "\n".join(
                         f"• **{p['project']}** | {p['chain']} | `{p['symbol']}`\n"
